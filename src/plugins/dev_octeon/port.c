@@ -484,32 +484,26 @@ oct_port_start (vlib_main_t *vm, vnet_dev_port_t *port)
       goto done;
     }
 
-  if (!(roc_nix_is_sdp (nix) || roc_nix_is_lbk (nix)))
+  if (port->promisc && !(roc_nix_is_sdp (nix) || roc_nix_is_lbk (nix)))
     {
-
-      rv = roc_nix_npc_promisc_ena_dis (nix, port->promisc);
-      if (rv)
+      if ((rrv = roc_nix_npc_promisc_ena_dis (nix, 1)))
 	{
-	  return oct_roc_err (dev, rv, "roc_nix_npc_promisc_ena_dis failed");
+	  rv = oct_roc_err (dev, rrv, "roc_nix_npc_promisc_ena_dis failed");
+	  goto done;
 	}
 
       if (roc_nix_is_pf (nix))
 	{
-
-	  if ((rrv = roc_nix_mac_promisc_mode_enable (nix, port->promisc)))
+	  if ((rrv = roc_nix_mac_promisc_mode_enable (nix, 1)))
 	    {
-	      if (rrv == LMAC_AF_ERR_INVALID_PARAM)
+	      if (rrv != LMAC_AF_ERR_INVALID_PARAM)
 		{
-	          log_debug (dev, "Already in same promisc state");
-	          rv = VNET_DEV_OK;
-	        }
-	      else
-	        {
-	          rv = oct_roc_err (dev, rrv,
-				    "roc_nix_mac_promisc_mode_enable(%s) failed",
-				    port->promisc ? "true" : "false");
+		  rv = oct_roc_err (
+		    dev, rrv,
+		    "roc_nix_mac_promisc_mode_enable(true) failed");
 		  goto done;
-	        }
+		}
+	      log_debug (dev, "promisc already enabled at MAC level");
 	    }
 	}
     }
@@ -524,7 +518,7 @@ oct_port_start (vlib_main_t *vm, vnet_dev_port_t *port)
 done:
   if (rv != VNET_DEV_OK)
     oct_port_stop (vm, port);
-  return VNET_DEV_OK;
+  return rv;
 }
 
 void
@@ -597,9 +591,7 @@ oct_op_config_promisc_mode (vlib_main_t *vm, vnet_dev_port_t *port, int enable)
 
   rv = roc_nix_npc_promisc_ena_dis (nix, enable);
   if (rv)
-    {
-      return oct_roc_err (dev, rv, "roc_nix_npc_promisc_ena_dis failed");
-    }
+    return oct_roc_err (dev, rv, "roc_nix_npc_promisc_ena_dis failed");
 
   if (!roc_nix_is_pf (nix))
     return VNET_DEV_OK;
@@ -607,16 +599,11 @@ oct_op_config_promisc_mode (vlib_main_t *vm, vnet_dev_port_t *port, int enable)
   rv = roc_nix_mac_promisc_mode_enable (nix, enable);
   if (rv)
     {
-      if (rv == LMAC_AF_ERR_INVALID_PARAM)
-        {
-          log_debug (dev, "Already in same promisc state");
-        }
-      else
-        {
-          return oct_roc_err (dev, rv,
-			      "roc_nix_mac_promisc_mode_enable(%s) failed",
-			      enable ? "true" : "false");
-        }
+      if (rv != LMAC_AF_ERR_INVALID_PARAM)
+	return oct_roc_err (dev, rv,
+			    "roc_nix_mac_promisc_mode_enable(%s) failed",
+			    enable ? "true" : "false");
+      log_debug (dev, "promisc already in requested state at MAC level");
     }
 
   return VNET_DEV_OK;
